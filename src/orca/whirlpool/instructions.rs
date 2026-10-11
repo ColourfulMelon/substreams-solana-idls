@@ -550,7 +550,16 @@ impl<'a> TryFrom<&'a [u8]> for WhirlpoolInstruction {
             INITIALIZE_POOL_V2 => Self::InitializePoolV2(InitializePoolV2Instruction::try_from_slice(payload)?),
             INITIALIZE_REWARD_V2 => Self::InitializeRewardV2(InitializeRewardV2Instruction::try_from_slice(payload)?),
             SET_REWARD_EMISSIONS_V2 => Self::SetRewardEmissionsV2(SetRewardEmissionsV2Instruction::try_from_slice(payload)?),
-            SWAP_V2 => Self::SwapV2(SwapV2Instruction::try_from_slice(payload)?),
+            SWAP_V2 => {
+                // Finalized routed instructions append seven zero padding
+                // bytes after the None remaining-account marker.
+                let prefix = if payload.len() == 42 && payload[34..].iter().all(|byte| *byte == 0) {
+                    &payload[..35]
+                } else {
+                    payload
+                };
+                Self::SwapV2(SwapV2Instruction::try_from_slice(prefix)?)
+            }
             TWO_HOP_SWAP_V2 => Self::TwoHopSwapV2(TwoHopSwapV2Instruction::try_from_slice(payload)?),
             INITIALIZE_CONFIG_EXTENSION => Self::InitializeConfigExtension,
             SET_CONFIG_EXTENSION_AUTHORITY => Self::SetConfigExtensionAuthority,

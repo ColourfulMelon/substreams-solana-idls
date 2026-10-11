@@ -26,3 +26,38 @@ mod tests {
         }
     }
 }
+
+#[test]
+fn swap2_decodes_referral_transfer_hook_without_changing_older_variants() {
+    use borsh::BorshDeserialize;
+    use substreams_solana_idls::meteora::dlmm::instructions::{
+        unpack, AccountsType, MeteoraDlmmInstruction, RemainingAccountsInfo, RemainingAccountsSlice, Swap2Instruction, SWAP2,
+    };
+    let variants = [
+        AccountsType::TransferHookX,
+        AccountsType::TransferHookY,
+        AccountsType::TransferHookReward,
+        AccountsType::TransferHookMultiReward(7),
+        AccountsType::TransferHookReferral,
+    ];
+    for (index, value) in variants.iter().enumerate() {
+        let bytes = borsh::to_vec(value).unwrap();
+        assert_eq!(bytes[0], index as u8);
+        assert_eq!(&AccountsType::try_from_slice(&bytes).unwrap(), value);
+    }
+    let mut data = SWAP2.to_vec();
+    data.extend_from_slice(
+        &borsh::to_vec(&Swap2Instruction {
+            amount_in: 214_849,
+            min_amount_out: 0,
+            remaining_accounts_info: RemainingAccountsInfo {
+                slices: vec![RemainingAccountsSlice {
+                    accounts_type: AccountsType::TransferHookReferral,
+                    length: 0,
+                }],
+            },
+        })
+        .unwrap(),
+    );
+    assert!(matches!(unpack(&data), Ok(MeteoraDlmmInstruction::Swap2(_))));
+}

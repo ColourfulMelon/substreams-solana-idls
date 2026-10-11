@@ -10,6 +10,7 @@ pub enum AccountsType {
     TransferHookY,
     TransferHookReward,
     TransferHookMultiReward(u8),
+    TransferHookReferral,
 }
 
 /// Type of the activation
