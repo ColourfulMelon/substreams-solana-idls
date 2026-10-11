@@ -4,21 +4,20 @@ This document captures durable navigation and workflow knowledge for `substreams
 
 ## 1) Workspace Layout
 
-- `Cargo.toml`: root package metadata plus workspace membership.
-- `src/lib.rs`: root re-exports of selected protocol crates.
-- `packages/common/`: shared `ParseError` and account parsing helpers used by protocol crates.
-- `packages/<protocol>/`: one crate per protocol (for example `raydium`, `jupiter`, `pumpfun`).
+- `Cargo.toml`: single-crate package metadata and dependencies.
+- `src/lib.rs`: protocol module exports.
+- `src/common/`: shared `ParseError` and account parsing helpers used by protocol modules.
+- `src/<protocol>/`: one module per protocol (for example `raydium`, `jupiter`, `pumpfun`).
 - `.github/workflows/`: CI/publish pipelines.
 - `target/`: Rust build artifacts (generated; not source).
 
-Each protocol package typically contains:
+Each protocol module typically contains:
 
-- `Cargo.toml`: crate dependencies and metadata.
-- `src/lib.rs`: protocol module entrypoint and `PROGRAM_ID` constants.
-- `src/instructions.rs`: instruction enums + `unpack`.
-- `src/events.rs`: event enums/structs + `unpack` (if supported).
-- `src/accounts.rs`: account helper structs/functions (if needed).
-- `src/<variant>/`: versioned or product-specific submodules (`v4`, `v6`, `amm`, `clmm`, etc.).
+- `mod.rs`: protocol module entrypoint and `PROGRAM_ID` constants.
+- `instructions.rs`: instruction enums + `unpack`.
+- `events.rs`: event enums/structs + `unpack` (if supported).
+- `accounts.rs`: account helper structs/functions (if needed).
+- `<variant>/`: versioned or product-specific submodules (`v4`, `v6`, `amm`, `clmm`, etc.).
 - `tests/*.rs`: decode fixtures and behavior checks.
 
 ## 2) Architecture / Data-Flow Mental Model
@@ -29,19 +28,18 @@ Each protocol package typically contains:
 - Shared errors: `common::ParseError` standardizes decode failures across crates.
 - Substreams usage: downstream mappings filter by `PROGRAM_ID`, decode, then map to output entities.
 
-Think of each protocol crate as a codec library with a stable decode API: `PROGRAM_ID` + `unpack` + typed structs.
+Think of each protocol module as a codec library with a stable decode API: `PROGRAM_ID` + `unpack` + typed structs.
 
 ## 3) Where To Edit For X
 
-- Add a new protocol crate:
-  - Add `packages/<protocol>/`.
-  - Register it in `Cargo.toml` `[workspace].members` and `[dependencies]`.
-  - Optionally re-export in `src/lib.rs`.
+- Add a new protocol module:
+  - Add `src/<protocol>/`.
+  - Register the module in `src/lib.rs`.
 
 - Add support for a new program/version inside an existing protocol:
-  - Add a new module under `packages/<protocol>/src/<variant>/`.
-  - Wire it in `packages/<protocol>/src/lib.rs` or parent `mod.rs`.
-  - Add/extend tests in `packages/<protocol>/tests/`.
+  - Add a new module under `src/<protocol>/<variant>/`.
+  - Wire it in `src/<protocol>/mod.rs` or parent `mod.rs`.
+  - Add/extend tests in `tests/<protocol>/`.
 
 - Update instruction decoding logic:
   - Edit `instructions.rs` in the relevant protocol/variant module.
@@ -51,13 +49,13 @@ Think of each protocol crate as a codec library with a stable decode API: `PROGR
 
 - Update account parsing helpers:
   - Edit `accounts.rs` in the relevant module.
-  - Shared account helper macros live in `packages/common/src/accounts.rs`.
+  - Shared account helper macros live in `src/common/accounts.rs`.
 
 - Change shared parse error behavior:
-  - Edit `packages/common/src/lib.rs` (`ParseError`).
+  - Edit `src/common/mod.rs` (`ParseError`).
 
 - Expose protocol from top-level crate path:
-  - Add `pub use <protocol>;` in `src/lib.rs`.
+  - Add `pub mod <protocol>;` in `src/lib.rs`.
 
 ## 4) Key Build/Test Anchors
 
@@ -72,8 +70,8 @@ CI equivalents are defined in `.github/workflows/ci.yml`.
 
 Source of truth:
 
-- `packages/**/src/**/*.rs`
-- `packages/**/tests/**/*.rs`
+- `src/**/*.rs`
+- `tests/**/*.rs`
 - `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`
 - `.github/workflows/*.yml`
 
@@ -83,7 +81,20 @@ Generated/build artifacts:
 
 Committed data artifacts (treated as inputs, not build outputs):
 
-- `packages/**/src/**/idl*.json`
-- `packages/**/src/idl.json`
+- `src/**/idl*.json`
 
 Those JSON IDLs are checked in and used by maintainers as decoder references.
+
+## Current Pump trade variants
+
+The bonding curve supports legacy buy/sell, exact SOL input, and V2/V3
+buy/sell/exact quote input. Token quote mints are decoded from the current
+TradeEvent prefix, including its variable string and shareholder vector;
+fixed offsets after those fields are unsafe. Official IDLs:
+https://github.com/pump-fun/pump-public-docs/tree/main/idl.
+
+Finalized transactions on 2026-10-11 show a second boolean after buy_v2 and
+legacy PumpSwap buy flags even where the published IDL declares one. The
+parser accepts up to two validated boolean bytes; arbitrary trailing bytes
+remain errors. PumpSwap V2 uses `TradeTokenAccounts` for the shared first nine
+accounts. Legacy fee recipients at indices 9/10 become token programs in V2.

@@ -18,6 +18,9 @@ pub const DEPOSIT: [u8; 8] = [242, 35, 198, 137, 82, 225, 242, 182];
 pub const DISABLE: [u8; 8] = [185, 173, 187, 90, 216, 15, 238, 233];
 pub const EXTEND_ACCOUNT: [u8; 8] = [234, 102, 194, 203, 150, 72, 62, 229];
 pub const INIT_USER_VOLUME_ACCUMULATOR: [u8; 8] = [94, 6, 202, 115, 255, 96, 232, 183];
+pub const BUY_V2: [u8; 8] = [184, 23, 238, 97, 103, 197, 211, 61];
+pub const BUY_EXACT_QUOTE_IN_V2: [u8; 8] = [194, 171, 28, 70, 104, 77, 91, 47];
+pub const SELL_V2: [u8; 8] = [93, 246, 130, 60, 231, 233, 64, 178];
 pub const SELL: [u8; 8] = [51, 230, 133, 164, 1, 127, 131, 173];
 pub const SET_COIN_CREATOR: [u8; 8] = [210, 149, 128, 45, 188, 58, 78, 175];
 pub const SET_RESERVED_FEE_RECIPIENT: [u8; 8] = [207, 189, 178, 71, 167, 122, 68, 180];
@@ -51,6 +54,9 @@ pub enum PumpSwapInstruction {
     UpdateFeeConfig(UpdateFeeConfigInstruction),
     Withdraw(WithdrawInstruction),
     Unknown,
+    BuyV2(BuyInstruction),
+    BuyExactQuoteInV2(BuyExactQuoteInInstruction),
+    SellV2(SellInstruction),
 }
 
 #[derive(Debug, Clone, PartialEq, BorshSerialize, BorshDeserialize)]
@@ -157,12 +163,14 @@ impl<'a> TryFrom<&'a [u8]> for PumpSwapInstruction {
         let (disc, payload) = data.split_at(8);
         let discriminator: [u8; 8] = disc.try_into().expect("slice len 8");
 
-        // Current buy arguments append an OptionBool `track_volume` flag to the
+        // Current buy arguments append OptionBool track_volume/partial_fill flags to the
         // two amounts. Validate it without changing the existing amount-only
         // structs, and keep decoding historical instructions without the flag.
         let payload = match discriminator {
-            BUY | BUY_EXACT_QUOTE_IN if payload.len() == 17 => {
-                bool::try_from_slice(&payload[16..])?;
+            BUY | BUY_EXACT_QUOTE_IN if matches!(payload.len(), 17 | 18) => {
+                for flag in &payload[16..] {
+                    bool::try_from_slice(&[*flag])?;
+                }
                 &payload[..16]
             }
             _ => payload,
@@ -183,6 +191,9 @@ impl<'a> TryFrom<&'a [u8]> for PumpSwapInstruction {
             EXTEND_ACCOUNT => Self::ExtendAccount,
             INIT_USER_VOLUME_ACCUMULATOR => Self::InitUserVolumeAccumulator,
             SELL => Self::Sell(SellInstruction::try_from_slice(payload)?),
+            BUY_V2 => Self::BuyV2(BuyInstruction::try_from_slice(payload)?),
+            BUY_EXACT_QUOTE_IN_V2 => Self::BuyExactQuoteInV2(BuyExactQuoteInInstruction::try_from_slice(payload)?),
+            SELL_V2 => Self::SellV2(SellInstruction::try_from_slice(payload)?),
             SET_COIN_CREATOR => Self::SetCoinCreator,
             SET_RESERVED_FEE_RECIPIENT => Self::SetReservedFeeRecipient(SetReservedFeeRecipientInstruction::try_from_slice(payload)?),
             SYNC_USER_VOLUME_ACCUMULATOR => Self::SyncUserVolumeAccumulator,

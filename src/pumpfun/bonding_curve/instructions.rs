@@ -8,6 +8,12 @@ use solana_program::pubkey::Pubkey;
 // -----------------------------------------------------------------------------
 const BUY: [u8; 8] = [102, 6, 61, 18, 1, 218, 235, 234]; // 33e685a4017f83ad
 pub const BUY_EXACT_SOL_IN: [u8; 8] = [56, 252, 116, 8, 158, 223, 205, 95];
+pub const BUY_V2: [u8; 8] = [184, 23, 238, 97, 103, 197, 211, 61];
+pub const BUY_EXACT_QUOTE_IN_V2: [u8; 8] = [194, 171, 28, 70, 104, 77, 91, 47];
+pub const SELL_V2: [u8; 8] = [93, 246, 130, 60, 231, 233, 64, 178];
+pub const BUY_V3: [u8; 8] = [7, 5, 29, 196, 245, 23, 101, 80];
+pub const BUY_EXACT_QUOTE_IN_V3: [u8; 8] = [225, 247, 80, 30, 213, 179, 132, 136];
+pub const SELL_V3: [u8; 8] = [28, 146, 222, 119, 38, 196, 105, 213];
 const SELL: [u8; 8] = [51, 230, 133, 164, 1, 127, 131, 173]; // 66063d1201daebea
 const INITIALIZE: [u8; 8] = [175, 175, 109, 31, 13, 152, 155, 237];
 const SET_PARAMS: [u8; 8] = [165, 31, 134, 53, 189, 180, 130, 255];
@@ -133,6 +139,12 @@ pub enum PumpFunInstruction {
     Unknown,
     /// Buys tokens with an exact SOL input, using the same account list as `Buy`.
     BuyExactSolIn(BuyExactSolInInstruction),
+    BuyV2(BuyInstruction),
+    BuyExactQuoteInV2(BuyExactQuoteInInstruction),
+    SellV2(SellInstruction),
+    BuyV3(BuyInstruction),
+    BuyExactQuoteInV3(BuyExactQuoteInInstruction),
+    SellV3(SellInstruction),
 }
 
 // -----------------------------------------------------------------------------
@@ -183,6 +195,12 @@ pub struct BuyExactSolInInstruction {
     pub min_tokens_out: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct BuyExactQuoteInInstruction {
+    pub spendable_quote_in: u64,
+    pub min_tokens_out: u64,
+}
+
 /// Instruction data for [`PumpFunInstruction::Sell`].
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct SellInstruction {
@@ -206,15 +224,22 @@ impl<'a> TryFrom<&'a [u8]> for PumpFunInstruction {
         let (disc, payload) = data.split_at(8);
         let discriminator: [u8; 8] = disc.try_into().expect("slice len 8");
 
-        // Current buy arguments append an OptionBool `track_volume` flag. The
-        // amount structs retain their historical API; only a valid flag may be
-        // omitted from their payload before strict amount deserialization.
-        let payload = match discriminator {
-            BUY | BUY_EXACT_SOL_IN if payload.len() == 17 => {
-                bool::try_from_slice(&payload[16..])?;
-                &payload[..16]
+        // Current buys append one or two OptionBool flags. V2 IDLs declare
+        // partial_fill, and finalized buy_v2 transactions also carry a second
+        // boolean. Validate both bytes rather than dropping those transactions.
+        // retain compatibility with the historical two-u64 amount API.
+        let maximum_flags = match discriminator {
+            BUY | BUY_EXACT_SOL_IN => 2,
+            BUY_V2 | BUY_EXACT_QUOTE_IN_V2 | BUY_V3 | BUY_EXACT_QUOTE_IN_V3 => 2,
+            _ => 0,
+        };
+        let payload = if maximum_flags > 0 && (16..=16 + maximum_flags).contains(&payload.len()) {
+            for flag in &payload[16..] {
+                bool::try_from_slice(&[*flag])?;
             }
-            _ => payload,
+            &payload[..16]
+        } else {
+            payload
         };
 
         Ok(match discriminator {
@@ -223,6 +248,12 @@ impl<'a> TryFrom<&'a [u8]> for PumpFunInstruction {
             BUY => Self::Buy(BuyInstruction::try_from_slice(payload)?),
             BUY_EXACT_SOL_IN => Self::BuyExactSolIn(BuyExactSolInInstruction::try_from_slice(payload)?),
             SELL => Self::Sell(SellInstruction::try_from_slice(payload)?),
+            BUY_V2 => Self::BuyV2(BuyInstruction::try_from_slice(payload)?),
+            BUY_EXACT_QUOTE_IN_V2 => Self::BuyExactQuoteInV2(BuyExactQuoteInInstruction::try_from_slice(payload)?),
+            SELL_V2 => Self::SellV2(SellInstruction::try_from_slice(payload)?),
+            BUY_V3 => Self::BuyV3(BuyInstruction::try_from_slice(payload)?),
+            BUY_EXACT_QUOTE_IN_V3 => Self::BuyExactQuoteInV3(BuyExactQuoteInInstruction::try_from_slice(payload)?),
+            SELL_V3 => Self::SellV3(SellInstruction::try_from_slice(payload)?),
             WITHDRAW => Self::Withdraw,
             INITIALIZE => Self::Initialize,
             other => return Err(ParseError::Unknown(other)),

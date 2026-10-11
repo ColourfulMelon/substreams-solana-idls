@@ -107,6 +107,15 @@ pub enum PumpSwapAccount {
     UserVolumeAccumulator(UserVolumeAccumulator),
 }
 
+/// Stable trade prefix shared by legacy and V2 instructions. Fee recipient
+/// slots differ in V2, so consumers that only need pair/user/vault attribution
+/// must use this type rather than interpreting V2 token programs as recipients.
+accounts!(TradeTokenAccounts, get_trade_token_accounts, {
+    pool, user, global_config, base_mint, quote_mint,
+    user_base_token_account, user_quote_token_account,
+    pool_base_token_account, pool_quote_token_account
+});
+
 // -----------------------------------------------------------------------------
 // Trade-instruction account layout (Buy / Sell / BuyExactQuoteIn)
 // -----------------------------------------------------------------------------
@@ -164,12 +173,7 @@ impl<'ix> TryFrom<&InstructionView<'ix>> for TradeAccounts {
             crate::common::accounts::to_pubkey(name, index, a.0)
         };
 
-        let get_opt = |index: usize| -> Option<Pubkey> {
-            accounts
-                .get(index)
-                .and_then(|a| a.0.as_slice().try_into().ok())
-                .map(Pubkey::new_from_array)
-        };
+        let get_opt = |index: usize| -> Option<Pubkey> { accounts.get(index).and_then(|a| a.0.as_slice().try_into().ok()).map(Pubkey::new_from_array) };
 
         Ok(TradeAccounts {
             pool: get_req(IDX_POOL, "pool")?,
@@ -182,10 +186,7 @@ impl<'ix> TryFrom<&InstructionView<'ix>> for TradeAccounts {
             pool_base_token_account: get_req(IDX_POOL_BASE_TOKEN_ACCOUNT, "pool_base_token_account")?,
             pool_quote_token_account: get_req(IDX_POOL_QUOTE_TOKEN_ACCOUNT, "pool_quote_token_account")?,
             protocol_fee_recipient: get_req(IDX_PROTOCOL_FEE_RECIPIENT, "protocol_fee_recipient")?,
-            protocol_fee_recipient_token_account: get_req(
-                IDX_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT,
-                "protocol_fee_recipient_token_account",
-            )?,
+            protocol_fee_recipient_token_account: get_req(IDX_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT, "protocol_fee_recipient_token_account")?,
             coin_creator_vault_ata: get_opt(IDX_COIN_CREATOR_VAULT_ATA),
             coin_creator_vault_authority: get_opt(IDX_COIN_CREATOR_VAULT_AUTHORITY),
         })

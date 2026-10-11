@@ -99,7 +99,38 @@ fn parse_current_and_legacy_buy_arguments() {
             assert!(unpack(&data).is_err());
             data.truncate(24);
             data.extend_from_slice(&[1, 0]);
+            assert!(unpack(&data).is_ok());
+            data.push(0);
             assert!(unpack(&data).is_err());
         }
     }
+}
+
+#[test]
+fn decodes_all_current_quote_swap_variants_without_relaxing_payloads() {
+    for disc in [BUY_V2, BUY_EXACT_QUOTE_IN_V2, SELL_V2, BUY_V3, BUY_EXACT_QUOTE_IN_V3, SELL_V3] {
+        let mut data = disc.to_vec();
+        data.extend_from_slice(&1_000u64.to_le_bytes());
+        data.extend_from_slice(&2_000u64.to_le_bytes());
+        assert!(unpack(&data).is_ok());
+        data.push(1);
+        assert_eq!(unpack(&data).is_ok(), ![SELL_V2, SELL_V3].contains(&disc));
+        data[24] = 2;
+        assert!(unpack(&data).is_err());
+        assert!(unpack(&data[..23]).is_err());
+    }
+}
+
+#[test]
+fn current_v2_buy_accepts_two_boolean_flags_but_rejects_invalid_values() {
+    let mut data = BUY_V2.to_vec();
+    data.extend_from_slice(&2_344_016_107_465u64.to_le_bytes());
+    data.extend_from_slice(&117_425_128u64.to_le_bytes());
+    data.extend_from_slice(&[1, 1]);
+    assert!(matches!(unpack(&data).unwrap(), PumpFunInstruction::BuyV2(_)));
+    data[25] = 2;
+    assert!(unpack(&data).is_err());
+    data[25] = 0;
+    data.push(1);
+    assert!(unpack(&data).is_err());
 }
