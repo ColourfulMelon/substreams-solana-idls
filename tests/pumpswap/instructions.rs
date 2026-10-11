@@ -51,7 +51,7 @@ fn test_buy_rejects_invalid_or_extra_volume_flag_bytes() {
         data.push(2);
         assert!(unpack(&data).is_err(), "invalid boolean must fail");
         data.pop();
-        data.extend_from_slice(&[1, 0]);
+        data.extend_from_slice(&[1, 0, 1]);
         assert!(unpack(&data).is_err(), "extra bytes must fail");
         data.truncate(23);
         assert!(unpack(&data).is_err(), "truncated amounts must fail");
@@ -171,4 +171,23 @@ fn test_unknown() {
 fn test_too_short() {
     let data = [0u8; 4];
     assert!(unpack(&data).is_err());
+}
+
+#[test]
+fn test_v2_trade_variants_and_current_two_flags() {
+    for discriminator in [BUY, BUY_EXACT_QUOTE_IN, BUY_V2, BUY_EXACT_QUOTE_IN_V2, SELL_V2] {
+        let mut data = discriminator.to_vec();
+        data.extend_from_slice(&100u64.to_le_bytes());
+        data.extend_from_slice(&200u64.to_le_bytes());
+        assert!(unpack(&data).is_ok());
+        data.truncate(23);
+        assert!(unpack(&data).is_err());
+        data.push(0);
+        data.extend_from_slice(&[1, 1]);
+        if matches!(discriminator, BUY | BUY_EXACT_QUOTE_IN) {
+            assert!(unpack(&data).is_ok());
+            data[25] = 2;
+        }
+        assert!(unpack(&data).is_err());
+    }
 }

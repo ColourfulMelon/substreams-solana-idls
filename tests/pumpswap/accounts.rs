@@ -252,3 +252,21 @@ fn trade_accounts_reports_missing_required_account() {
         }
     ));
 }
+
+#[test]
+fn v2_trade_prefix_never_mislabels_token_programs_as_fee_recipients() {
+    let mut accounts = full_v2_accounts();
+    // Current V2 reorders token programs into the old fee-recipient slots.
+    accounts[9] = BASE_TOKEN_PROGRAM;
+    accounts[10] = QUOTE_TOKEN_PROGRAM;
+    let tx = make_tx(&accounts);
+    let ix = tx.walk_instructions().next().unwrap();
+    let trade = get_trade_token_accounts(&ix).unwrap();
+    assert_eq!(trade.pool, pubkey(POOL));
+    assert_eq!(trade.base_mint, pubkey(BASE_MINT));
+    assert_eq!(trade.quote_mint, pubkey(QUOTE_MINT));
+    assert_eq!(trade.user_base_token_account, pubkey(USER_BASE_TA));
+    assert_eq!(trade.pool_quote_token_account, pubkey(POOL_QUOTE_TA));
+    let short = make_tx(&accounts[..8]);
+    assert!(get_trade_token_accounts(&short.walk_instructions().next().unwrap()).is_err());
+}

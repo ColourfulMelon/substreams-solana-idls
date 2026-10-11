@@ -329,19 +329,9 @@ pub fn unpack_trade_event_minimal(data: &[u8]) -> Result<Option<TradeEventMinima
     if payload.len() < TRADE_PAYLOAD_MIN_LEN {
         return Err(ParseError::TooShort(payload.len()));
     }
-    let mint: [u8; 32] = payload[MINT_OFFSET..MINT_OFFSET + 32]
-        .try_into()
-        .expect("len 32");
-    let sol_amount = u64::from_le_bytes(
-        payload[SOL_AMOUNT_OFFSET..SOL_AMOUNT_OFFSET + 8]
-            .try_into()
-            .expect("len 8"),
-    );
-    let token_amount = u64::from_le_bytes(
-        payload[TOKEN_AMOUNT_OFFSET..TOKEN_AMOUNT_OFFSET + 8]
-            .try_into()
-            .expect("len 8"),
-    );
+    let mint: [u8; 32] = payload[MINT_OFFSET..MINT_OFFSET + 32].try_into().expect("len 32");
+    let sol_amount = u64::from_le_bytes(payload[SOL_AMOUNT_OFFSET..SOL_AMOUNT_OFFSET + 8].try_into().expect("len 8"));
+    let token_amount = u64::from_le_bytes(payload[TOKEN_AMOUNT_OFFSET..TOKEN_AMOUNT_OFFSET + 8].try_into().expect("len 8"));
     let is_buy = match payload[IS_BUY_OFFSET] {
         0 => false,
         1 => true,
@@ -352,9 +342,7 @@ pub fn unpack_trade_event_minimal(data: &[u8]) -> Result<Option<TradeEventMinima
             })
         }
     };
-    let user: [u8; 32] = payload[USER_OFFSET..USER_OFFSET + 32]
-        .try_into()
-        .expect("len 32");
+    let user: [u8; 32] = payload[USER_OFFSET..USER_OFFSET + 32].try_into().expect("len 32");
     Ok(Some(TradeEventMinimal {
         mint,
         sol_amount,
@@ -436,10 +424,7 @@ mod minimal_tests {
     fn errors_on_data_without_anchor_cpi_tag() {
         let mut data = make_event(true, pk(0), pk(0), 1, 1, &[]);
         data[..8].fill(0);
-        assert!(matches!(
-            unpack_trade_event_minimal(&data),
-            Err(ParseError::Unknown(_))
-        ));
+        assert!(matches!(unpack_trade_event_minimal(&data), Err(ParseError::Unknown(_))));
     }
 
     #[test]
@@ -448,10 +433,7 @@ mod minimal_tests {
         data.extend_from_slice(&ANCHOR_SELF_CPI_TAG);
         data.extend_from_slice(&TRADE);
         data.extend_from_slice(&[0u8; 50]); // < 81-byte minimum
-        assert!(matches!(
-            unpack_trade_event_minimal(&data),
-            Err(ParseError::TooShort(_))
-        ));
+        assert!(matches!(unpack_trade_event_minimal(&data), Err(ParseError::TooShort(_))));
     }
 
     #[test]
@@ -459,9 +441,110 @@ mod minimal_tests {
         let mut data = make_event(true, pk(0), pk(0), 1, 1, &[]);
         // is_buy lives at offset 16 (preamble) + 48 (within payload) = 64
         data[16 + IS_BUY_OFFSET] = 2;
-        assert!(matches!(
-            unpack_trade_event_minimal(&data),
-            Err(ParseError::InvalidLength { .. })
-        ));
+        assert!(matches!(unpack_trade_event_minimal(&data), Err(ParseError::InvalidLength { .. })));
+    }
+}
+
+/// Current quote-aware TradeEvent prefix from pump-public-docs/idl/pump.json.
+/// Consume named dynamic fields so shareholder/string lengths cannot shift mint
+/// attribution. Later append-only fields do not change this proven prefix.
+#[allow(dead_code)]
+#[derive(BorshDeserialize)]
+#[cfg_attr(test, derive(BorshSerialize))]
+struct QuoteShareholder {
+    address: Pubkey,
+    share_bps: u16,
+}
+
+#[allow(dead_code)]
+#[derive(BorshDeserialize)]
+#[cfg_attr(test, derive(Default, BorshSerialize))]
+struct QuoteTradePrefix {
+    mint: Pubkey,
+    sol_amount: u64,
+    token_amount: u64,
+    is_buy: bool,
+    user: Pubkey,
+    timestamp: i64,
+    virtual_sol_reserves: u64,
+    virtual_token_reserves: u64,
+    real_sol_reserves: u64,
+    real_token_reserves: u64,
+    fee_recipient: Pubkey,
+    fee_basis_points: u64,
+    fee: u64,
+    creator: Pubkey,
+    creator_fee_basis_points: u64,
+    creator_fee: u64,
+    track_volume: bool,
+    total_unclaimed_tokens: u64,
+    total_claimed_tokens: u64,
+    current_sol_volume: u64,
+    last_update_timestamp: i64,
+    ix_name: String,
+    mayhem_mode: bool,
+    cashback_fee_basis_points: u64,
+    cashback: u64,
+    buyback_fee_basis_points: u64,
+    buyback_fee: u64,
+    shareholders: Vec<QuoteShareholder>,
+    quote_mint: Pubkey,
+    quote_amount: u64,
+}
+
+pub struct QuoteTradeAmounts {
+    pub mint: [u8; 32],
+    pub amount: u64,
+    pub fee: u64,
+    pub creator_fee: u64,
+    pub buyback_fee: u64,
+}
+
+pub fn unpack_quote_trade_amount(data: &[u8]) -> Result<QuoteTradeAmounts, ParseError> {
+    if data.len() < 16 {
+        return Err(ParseError::TooShort(data.len()));
+    }
+    if data[..8] != ANCHOR_SELF_CPI_TAG || data[8..16] != TRADE {
+        return Err(ParseError::Unknown(data[..8].try_into().expect("len 8")));
+    }
+    let quote = QuoteTradePrefix::deserialize(&mut &data[16..])?;
+    Ok(QuoteTradeAmounts {
+        mint: quote.quote_mint.to_bytes(),
+        amount: quote.quote_amount,
+        fee: quote.fee,
+        creator_fee: quote.creator_fee,
+        buyback_fee: quote.buyback_fee,
+    })
+}
+
+#[cfg(test)]
+mod quote_tests {
+    use super::*;
+
+    #[test]
+    fn quote_prefix_consumes_strings_and_shareholders_without_offset_assumptions() {
+        let quote = QuoteTradePrefix {
+            ix_name: "buy_exact_quote_in_v2".into(),
+            shareholders: vec![QuoteShareholder {
+                address: Pubkey::new_from_array([9; 32]),
+                share_bps: 10_000,
+            }],
+            quote_mint: Pubkey::new_from_array([7; 32]),
+            quote_amount: 900_000,
+            ..Default::default()
+        };
+        let mut data = ANCHOR_SELF_CPI_TAG.to_vec();
+        data.extend_from_slice(&TRADE);
+        data.extend_from_slice(&borsh::to_vec(&quote).unwrap());
+        let amounts = unpack_quote_trade_amount(&data).unwrap();
+        assert_eq!((amounts.mint, amounts.amount), ([7; 32], 900_000));
+        let original_len = data.len();
+        data.extend_from_slice(&[55; 100]);
+        let amounts = unpack_quote_trade_amount(&data).unwrap();
+        assert_eq!((amounts.mint, amounts.amount), ([7; 32], 900_000));
+        data.truncate(original_len - 1);
+        assert!(unpack_quote_trade_amount(&data).is_err());
+        data[0] ^= 1;
+        assert!(unpack_quote_trade_amount(&data).is_err());
     }
 }
